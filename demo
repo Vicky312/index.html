@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>G7易流 - 视频流切换逻辑原型</title>
+    <style>
+        /* 全局重置与基础样式 */
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
+        body { background-color: #0f1012; color: #fff; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+        /* 顶部导航 (模拟) */
+        .header { height: 48px; background-color: #1e1e2d; border-bottom: 1px solid #333; display: flex; align-items: center; padding: 0 20px; font-size: 14px; color: #aaa; }
+        .header .logo { font-weight: bold; color: #fff; margin-right: 40px; font-size: 18px; }
+
+        /* 主体布局 */
+        .main-container { flex: 1; display: flex; height: calc(100vh - 48px - 150px); /* 减去头部和底部图表/控制台 */ }
+
+        /* 左侧小视频列表 */
+        .sidebar-left { width: 240px; background-color: #151517; border-right: 1px solid #333; padding: 10px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+        .channel-item {
+            height: 140px; background-color: #000; border: 1px solid #444; position: relative; cursor: pointer; transition: 0.2s;
+        }
+        .channel-item:hover { border-color: #0088ff; }
+        .channel-item img { width: 100%; height: 100%; object-fit: cover; opacity: 0.6; }
+        .channel-item .badge { position: absolute; bottom: 5px; right: 5px; background: rgba(0,0,0,0.6); font-size: 10px; padding: 2px 4px; border-radius: 2px; color: #00ff00; }
+        .channel-item.active { border: 2px solid #0088ff; }
+
+        /* 中间大屏区域 */
+        .center-stage { flex: 1; background-color: #000; position: relative; display: flex; justify-content: center; align-items: center; overflow: hidden; }
+        
+        /* 模拟视频背景 */
+        .video-bg { width: 100%; height: 100%; object-fit: cover; opacity: 0.8; }
+        .watermark { position: absolute; width: 100%; height: 100%; pointer-events: none; background: repeating-linear-gradient(45deg, transparent, transparent 100px, rgba(255,255,255,0.03) 100px, rgba(255,255,255,0.03) 200px); }
+        
+        /* OSD 信息 (模拟) */
+        .osd-info { position: absolute; top: 20px; left: 20px; color: #ffa500; font-size: 24px; font-weight: bold; text-shadow: 1px 1px 2px #000; z-index: 10; }
+        .osd-info div { margin-bottom: 5px; }
+
+        /* --- 核心需求交互元素 --- */
+
+        /* 1. 高清/标清 切换按钮 */
+        .quality-switch-btn {
+            position: absolute; top: 20px; right: 20px;
+            background: rgba(0, 50, 80, 0.6);
+            border: 1px solid #0088ff;
+            color: #0088ff;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            z-index: 20;
+            transition: all 0.3s;
+        }
+        .quality-switch-btn:hover { background: rgba(0, 80, 150, 0.8); }
+        /* 标清状态样式 */
+        .quality-switch-btn.sd-mode { border-color: #666; color: #ccc; background: rgba(0,0,0,0.5); }
+
+        /* 2. 提示文案区域 (红色框选部分) */
+        .status-overlay {
+            position: absolute;
+            top: 20%;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 30;
+            text-align: center;
+            pointer-events: none; /* 让点击穿透 */
+            display: none; /* 默认隐藏 */
+        }
+        
+        /* 提示文案样式 - 对应截图红框 */
+        .status-text {
+            font-size: 20px;
+            color: #fff;
+            background-color: rgba(0,0,0,0.6);
+            padding: 10px 20px;
+            border: 2px solid #ff4400; /* 模仿截图中的红框强调，实际UI可去掉边框 */
+            border-radius: 4px;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+            box-shadow: 0 0 15px rgba(0,0,0,0.5);
+        }
+
+        /* 底部控制台 (PM专用) */
+        .pm-console {
+            height: 150px; background: #fff; color: #333; border-top: 4px solid #0088ff; padding: 15px;
+            display: flex; flex-direction: column; gap: 10px;
+            font-family: monospace;
+        }
+        .pm-title { font-weight: bold; font-size: 16px; color: #0088ff; margin-bottom: 5px; }
+        .btn-group { display: flex; gap: 10px; }
+        .ctrl-btn {
+            padding: 8px 16px; border: 1px solid #ccc; background: #f0f0f0; cursor: pointer; border-radius: 4px; font-weight: bold;
+        }
+        .ctrl-btn:hover { background: #e0e0e0; }
+        .ctrl-btn.primary { background: #0088ff; color: white; border-color: #0077ee; }
+        .ctrl-btn.danger { background: #ff4d4f; color: white; border-color: #ff4d4f; }
+        .log-area { font-size: 12px; color: #666; margin-top: 5px; }
+
+    </style>
+</head>
+<body>
+
+    <!-- 顶部 -->
+    <div class="header">
+        <div class="logo">G7易流 Prototype</div>
+        <div>全图监控 / 车辆跟踪 / 湘K19579D</div>
+    </div>
+
+    <!-- 主界面 -->
+    <div class="main-container">
+        <!-- 左侧列表 -->
+        <div class="sidebar-left">
+            <div class="channel-item active" onclick="switchChannel(this, 1)">
+                <img src="https://picsum.photos/300/200?random=1" alt="CH1">
+                <span class="badge">SD | 标清</span>
+            </div>
+            <div class="channel-item" onclick="switchChannel(this, 2)">
+                <img src="https://picsum.photos/300/200?random=2" alt="CH2">
+                <span class="badge">SD | 标清</span>
+            </div>
+            <div class="channel-item" onclick="switchChannel(this, 3)">
+                <img src="https://picsum.photos/300/200?random=3" alt="CH3">
+                <span class="badge">SD | 标清</span>
+            </div>
+            <div class="channel-item" onclick="switchChannel(this, 4)">
+                <img src="https://picsum.photos/300/200?random=4" alt="CH4">
+                <span class="badge">SD | 标清</span>
+            </div>
+        </div>
+
+        <!-- 中间大屏 -->
+        <div class="center-stage" id="mainPlayer">
+            <!-- 模拟视频图 -->
+            <img id="mainVideoImg" src="https://picsum.photos/1200/800?random=1" class="video-bg">
+            <div class="watermark"></div>
+
+            <!-- OSD 信息 -->
+            <div class="osd-info">
+                <div>湘K19579D</div>
+                <div>速度 28 km/h (G) <span style="float:right; margin-left:20px" id="timeDisplay">2026-01-23 16:51:35</span></div>
+            </div>
+
+            <!-- 需求点 1 & 2: 状态按钮 -->
+            <button id="qualityBtn" class="quality-switch-btn">
+                高清视频 <span style="font-size:10px">→</span>
+            </button>
+
+            <!-- 需求点 2 & 3: 提示文案层 -->
+            <div id="statusOverlay" class="status-overlay">
+                <div id="statusText" class="status-text">高清视频即将播放</div>
+            </div>
+        </div>
+        
+        <!-- 右侧面板占位 -->
+        <div style="width: 280px; background: #1a1a1a; border-left: 1px solid #333;"></div>
+    </div>
+
+    <!-- 底部 PM 演示控制台 -->
+    <div class="pm-console">
+        <div class="pm-title">产品经理交互演示控制台 (Simulate Backend Logic)</div>
+        <div class="log-area" id="logArea">当前状态: 页面初始化完成，左侧播放标清(SD)。</div>
+        <div class="btn-group">
+            <button class="ctrl-btn primary" onclick="manualTriggerSwitch()">1. 模拟：点击切换通道 (触发自动切高清)</button>
+            <button class="ctrl-btn" onclick="resolveSuccess()">2a. 模拟：视频加载成功 (15s内)</button>
+            <button class="ctrl-btn danger" onclick="resolveTimeout()">2b. 模拟：超时/失败 (>20s)</button>
+        </div>
+        <div style="font-size: 12px; margin-top:5px; color:#999;">
+            *说明：点击左侧缩略图或按钮1，会进入“加载中”状态。此时点击2a可看成功效果，点击2b可看失败降级效果。
+        </div>
+    </div>
+
+    <script>
+        // DOM 元素
+        const qualityBtn = document.getElementById('qualityBtn');
+        const statusOverlay = document.getElementById('statusOverlay');
+        const statusText = document.getElementById('statusText');
+        const mainVideoImg = document.getElementById('mainVideoImg');
+        const logArea = document.getElementById('logArea');
+
+        // 状态变量
+        let timer = null;
+        let isHD = false; // 当前大屏是否为高清
+        let isLoading = false;
+
+        // 初始化时钟
+        setInterval(() => {
+            const now = new Date();
+            document.getElementById('timeDisplay').innerText = now.toLocaleString('zh-CN', { hour12: false }).replace(/\//g, "-");
+        }, 1000);
+
+        // --- 核心逻辑函数 ---
+
+        // 1. 切换通道 / 触发加载
+        function switchChannel(el, id) {
+            // UI更新：选中态
+            document.querySelectorAll('.channel-item').forEach(item => item.classList.remove('active'));
+            if(el) el.classList.add('active');
+            
+            // 模拟更换图片
+            mainVideoImg.src = `https://picsum.photos/1200/800?random=${Date.now()}`;
+            
+            startHDSwitchLogic();
+        }
+
+        // 手动触发模拟
+        function manualTriggerSwitch() {
+            switchChannel(document.querySelector('.channel-item'), 1);
+        }
+
+        // 核心交互：开始切换高清逻辑
+        function startHDSwitchLogic() {
+            isLoading = true;
+            isHD = true; // 意图是切高清
+
+            log("动作：通道切换到大屏 -> 自动请求高清流...");
+            
+            // 1. 按钮显示为“高清视频”
+            qualityBtn.innerHTML = '高清视频 <span style="font-size:10px">→</span>';
+            qualityBtn.classList.remove('sd-mode');
+
+            // 2. 显示提示文案 "高清视频即将播放"
+            statusText.innerText = "高清视频即将播放";
+            statusText.style.borderColor = "#ff4400"; // 强调
+            statusOverlay.style.display = "block";
+
+            // 清除之前的定时器
+            if (timer) clearTimeout(timer);
+
+            // *真实开发中，这里会设置一个20s的setTimeout来自动触发失败，
+            // 但为了演示方便，我们等待用户点击底部控制台按钮来决定结果。
+            log("状态：等待流响应... (请点击底部按钮 2a 或 2b)");
+        }
+
+        // 场景 A: 加载成功
+        function resolveSuccess() {
+            if (!isLoading) { alert("请先触发切换通道"); return; }
+            
+            log("结果：高清流加载成功 (success)。");
+            
+            // 逻辑：提示文案消失
+            statusOverlay.style.display = "none";
+            isLoading = false;
+        }
+
+        // 场景 B: 超时或失败 ( >20s )
+        function resolveTimeout() {
+            if (!isLoading) { alert("请先触发切换通道"); return; }
+
+            log("结果：超时或加载失败 (>20s)。触发降级策略。");
+
+            // 1. 提示文案变更
+            statusText.innerText = "高清视频切换失败，将继续播放标清视频";
+            statusText.style.borderColor = "#ff4400"; // 保持醒目
+            
+            // 2. 按钮变更为“标清视频”
+            qualityBtn.innerHTML = '标清视频';
+            qualityBtn.classList.add('sd-mode');
+            isHD = false;
+
+            // 3. 3秒后提示消失
+            timer = setTimeout(() => {
+                statusOverlay.style.display = "none";
+                log("状态：错误提示已自动消失，当前播放：标清。");
+            }, 3000);
+
+            isLoading = false;
+        }
+
+        // 辅助日志
+        function log(msg) {
+            logArea.innerText = msg;
+            console.log(msg);
+        }
+
+        // 初始化
+        log("就绪。请点击左侧视频通道开始交互。");
+
+    </script>
+</body>
+</html>
